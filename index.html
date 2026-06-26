@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>KFC Curry Crunch AR</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+
+/* ── LIVE CAMERA LAYER ── */
+#cam{
+  position:fixed;inset:0;width:100%;height:100%;
+  object-fit:cover;z-index:0;
+  transform:scaleX(-1); /* mirror for front cam; will be overridden for rear */
+}
+
+/* ── MODEL VIEWER sits on top of camera, transparent bg ── */
+model-viewer{
+  position:fixed;inset:0;width:100%;height:100%;
+  z-index:1;
+  --poster-color:transparent;
+  background:transparent;
+}
+
+/* ── UI OVERLAY ── */
+#ui{
+  position:fixed;inset:0;z-index:10;pointer-events:none;
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:env(safe-area-inset-top,16px) 0 env(safe-area-inset-bottom,16px) 0;
+}
+
+/* Header */
+#header{
+  text-align:center;padding:14px 20px 10px;
+  background:linear-gradient(to bottom,rgba(0,0,0,0.65),transparent);
+}
+.eyebrow{font-family:"Helvetica Neue",Arial,sans-serif;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#e9a93c;font-weight:700}
+h1{font-family:"Arial Black","Helvetica Neue",sans-serif;font-weight:900;font-size:clamp(28px,9vw,46px);line-height:.95;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,0.6);margin-top:5px}
+h1 .red{color:#e4002b}
+.tag{font-size:12px;color:rgba(255,255,255,0.85);font-style:italic;margin-top:4px;text-shadow:0 1px 4px rgba(0,0,0,0.8)}
+
+/* Footer controls */
+#footer{
+  padding:0 16px 16px;
+  background:linear-gradient(to top,rgba(0,0,0,0.7),transparent);
+  pointer-events:all;
+}
+#hints{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
+.chip{
+  background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.25);
+  color:rgba(255,255,255,0.9);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  padding:5px 10px;border-radius:999px;backdrop-filter:blur(6px);
+}
+#camBtn{
+  width:100%;appearance:none;border:none;cursor:pointer;
+  background:linear-gradient(180deg,#e4002b,#b00021);
+  color:#fff;font-weight:800;font-size:16px;letter-spacing:.04em;
+  padding:15px;border-radius:14px;box-shadow:0 6px 20px rgba(228,0,43,.45);
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:transform .1s;
+}
+#camBtn:active{transform:scale(.97)}
+
+/* Loading overlay */
+#loader{
+  position:fixed;inset:0;z-index:20;
+  background:rgba(0,0,0,0.85);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  transition:opacity .5s;
+}
+#loader.hidden{opacity:0;pointer-events:none}
+.spinner{width:40px;height:40px;border:3px solid rgba(233,169,60,0.3);border-top-color:#e9a93c;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loader p{color:#e9d9c6;font-size:14px;font-family:"Helvetica Neue",sans-serif;letter-spacing:.05em}
+
+/* Camera permission screen */
+#permScreen{
+  position:fixed;inset:0;z-index:25;
+  background:linear-gradient(160deg,#1a0a06,#2a1008,#0c0604);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:20px;padding:32px;text-align:center;
+}
+#permScreen.hidden{display:none}
+#permScreen h2{font-family:"Arial Black",sans-serif;font-size:26px;color:#fff;font-weight:900}
+#permScreen p{color:#d8c4ad;font-size:14px;line-height:1.6;max-width:280px}
+#allowBtn{
+  appearance:none;border:none;cursor:pointer;
+  background:linear-gradient(180deg,#e4002b,#b00021);
+  color:#fff;font-weight:800;font-size:17px;
+  padding:16px 36px;border-radius:14px;
+  box-shadow:0 8px 22px rgba(228,0,43,.4);
+  letter-spacing:.03em;
+}
+.cam-icon{font-size:56px;margin-bottom:4px}
+
+/* AR tip toast */
+#toast{
+  position:fixed;bottom:130px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,0.7);color:#fff;font-size:13px;
+  padding:8px 18px;border-radius:999px;z-index:15;
+  opacity:0;transition:opacity .4s;white-space:nowrap;
+  backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.15);
+}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- Live camera video -->
+<video id="cam" autoplay playsinline muted></video>
+
+<!-- 3D model (transparent background over camera) -->
+<model-viewer
+  id="mv"
+  src="curry_crunch.glb"
+  alt="KFC Curry Crunch 3D"
+  camera-controls
+  touch-action="none"
+  auto-rotate
+  auto-rotate-delay="1200"
+  rotation-per-second="22deg"
+  interaction-prompt="none"
+  shadow-intensity="0"
+  exposure="1.4"
+  environment-image="neutral"
+  camera-orbit="30deg 72deg 0.38m"
+  min-camera-orbit="auto auto 0.15m"
+  max-camera-orbit="auto auto 0.85m"
+  field-of-view="34deg"
+  style="background:transparent">
+</model-viewer>
+
+<!-- Permission screen -->
+<div id="permScreen">
+  <div class="cam-icon">📷</div>
+  <h2>See it in your world</h2>
+  <p>Allow camera access to view the Curry Crunch floating in your real environment.</p>
+  <button id="allowBtn">Allow Camera</button>
+</div>
+
+<!-- Loading overlay -->
+<div id="loader">
+  <div class="spinner"></div>
+  <p>Loading Curry Crunch…</p>
+</div>
+
+<!-- UI overlay -->
+<div id="ui">
+  <div id="header">
+    <div class="eyebrow">KFC Bangladesh · New</div>
+    <h1>CURRY <span class="red">CRUNCH</span></h1>
+    <p class="tag">Hot & Crispy · Chettinad spice · Curry leaf</p>
+  </div>
+  <div id="footer">
+    <div id="hints">
+      <span class="chip">👆 Drag to rotate</span>
+      <span class="chip">🤏 Pinch to zoom</span>
+    </div>
+    <button id="camBtn">🔄 &nbsp;Switch Camera</button>
+  </div>
+</div>
+
+<div id="toast">Pinch to resize · drag to reposition</div>
+
+<script>
+const video    = document.getElementById('cam');
+const mv       = document.getElementById('mv');
+const loader   = document.getElementById('loader');
+const permScr  = document.getElementById('permScreen');
+const allowBtn = document.getElementById('allowBtn');
+const camBtn   = document.getElementById('camBtn');
+const toast    = document.getElementById('toast');
+
+let currentFacing = 'environment'; // start with rear camera
+let stream = null;
+
+// ── Start camera ─────────────────────────────────────────────────────────────
+async function startCamera(facing) {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width:{ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+    video.srcObject = stream;
+    // Rear camera: no mirror flip. Front: mirror.
+    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+    currentFacing = facing;
+    return true;
+  } catch(e) {
+    console.warn('Camera error:', e);
+    // Fallback: just hide video, show dark bg
+    video.style.display = 'none';
+    document.body.style.background = 'linear-gradient(160deg,#1a0a06,#2a1008)';
+    return false;
+  }
+}
+
+// ── Permission flow ───────────────────────────────────────────────────────────
+allowBtn.addEventListener('click', async () => {
+  permScr.classList.add('hidden');
+  await startCamera('environment');
+});
+
+// Check if we already have permission
+navigator.permissions?.query({name:'camera'})
+  .then(p => {
+    if (p.state === 'granted') {
+      permScr.classList.add('hidden');
+      startCamera('environment');
+    }
+  })
+  .catch(() => {
+    // permissions API not available, show the allow screen
+  });
+
+// ── Switch camera button ──────────────────────────────────────────────────────
+camBtn.addEventListener('click', () => {
+  const next = currentFacing === 'environment' ? 'user' : 'environment';
+  startCamera(next);
+  camBtn.textContent = next === 'user' ? '🔄  Rear Camera' : '🔄  Front Camera';
+});
+
+// ── Model viewer loading ──────────────────────────────────────────────────────
+mv.addEventListener('load', () => {
+  loader.classList.add('hidden');
+  // Show hint toast briefly
+  setTimeout(() => { toast.classList.add('show'); }, 800);
+  setTimeout(() => { toast.classList.remove('show'); }, 4000);
+});
+mv.addEventListener('error', () => {
+  loader.querySelector('p').textContent = 'Loading failed — refresh to retry';
+});
+
+// Pause auto-rotate on user interaction
+mv.addEventListener('camera-change', e => {
+  if (e.detail.source === 'user-interaction') mv.removeAttribute('auto-rotate');
+});
+// Resume on double-tap
+mv.addEventListener('dblclick', () => mv.setAttribute('auto-rotate',''));
+</script>
+</body>
+</html>
